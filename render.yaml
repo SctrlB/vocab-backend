@@ -3,7 +3,7 @@ services:
     name: vocab-backend
     runtime: node
     plan: free
-    buildCommand: echo "no build step"
+    buildCommand: npm install
     startCommand: npm start
     envVars:
       - key: NODE_VERSION
