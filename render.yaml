@@ -3,12 +3,14 @@ services:
     name: vocab-backend
     runtime: node
     plan: free
-    buildCommand: npm install
+    buildCommand: echo "no build step"
     startCommand: npm start
     envVars:
       - key: NODE_VERSION
         value: 20
-    disk:
-      name: vocab-disk
-      mountPath: /data
-      sizeGB: 1
+      - key: GH_TOKEN
+        sync: false
+      - key: GH_REPO
+        value: SctrlB/vocab-backend
+      - key: STATE_PATH
+        value: data/state.json
