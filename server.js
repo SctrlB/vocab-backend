@@ -78,7 +78,7 @@ app.post("/api/init", (req, res) => {
   if (!["cet4","cet6"].includes(tier)) return res.status(400).json({ ok:false, error:"tier must be cet4 or cet6" });
   if (![15,30,60].includes(mode))      return res.status(400).json({ ok:false, error:"mode must be 15/30/60" });
   try {
-    const r = initProgress(c.user.uid, tier, mode);
+    const r = initProgress(c.key, tier, mode);
     res.json({ ok:true, total:r.total, daily_target:r.daily_target, already:r.already });
   } catch (e) {
     res.status(500).json({ ok:false, error: e.message });
@@ -90,7 +90,7 @@ app.get("/api/due", (req, res) => {
   const tier = String(req.query.tier || c.user.tier || "");
   const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
   if (!["cet4","cet6"].includes(tier)) return res.status(400).json({ ok:false, error:"bad tier" });
-  const items = dueItems(c.user.uid, tier, limit);
+  const items = dueItems(c.key, tier, limit);
   res.json({ ok:true, items, count: items.length });
 });
 
@@ -98,7 +98,7 @@ app.get("/api/words/today", (req, res) => {
   const c = requireUser(req, res); if (!c) return;
   const tier = String(req.query.tier || c.user.tier || "");
   if (!["cet4","cet6"].includes(tier)) return res.status(400).json({ ok:false, error:"bad tier" });
-  const items = todayItems(c.user.uid, tier);
+  const items = todayItems(c.key, tier);
   const today0 = (() => { const d=new Date(); d.setHours(0,0,0,0); return d.getTime(); })();
   const completed = items.filter(i => i.last_reviewed && i.last_reviewed >= today0).length;
   res.json({ ok:true, day_index:0, total_today:items.length, completed_today:completed, items });
@@ -109,7 +109,7 @@ app.post("/api/grade", (req, res) => {
   const { word, tier, grade } = req.body || {};
   if (!word || !["cet4","cet6"].includes(tier)) return res.status(400).json({ ok:false, error:"missing word/tier" });
   try {
-    const r = gradeWord(c.user.uid, word, tier, grade);
+    const r = gradeWord(c.key, word, tier, grade);
     res.json(r);
   } catch (e) {
     res.status(400).json({ ok:false, error: e.message });
@@ -120,12 +120,12 @@ app.get("/api/stats", (req, res) => {
   const c = requireUser(req, res); if (!c) return;
   const tier = String(req.query.tier || c.user.tier || "");
   if (!["cet4","cet6"].includes(tier)) return res.status(400).json({ ok:false, error:"bad tier" });
-  res.json(stats(c.user.uid, tier));
+  res.json(stats(c.key, tier));
 });
 
 app.post("/api/reset", (req, res) => {
   const c = requireUser(req, res); if (!c) return;
-  const n = deleteProgressForUser(c.user.uid);
+  const n = deleteProgressForUser(c.key);
   res.json({ ok:true, deleted:n });
 });
 
@@ -144,4 +144,5 @@ if (fs.existsSync(FRONTEND_DIR)) {
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`vocab backend listening on :${PORT}`);
   console.log(`words: CET-4=${tierSize("cet4")} CET-6=${tierSize("cet6")}`);
+   console.log(`persistence: ${process.env.GH_TOKEN ? 'GitHub repo: ' + (process.env.GH_REPO||'SctrlB/vocab-backend') : 'EPHEMERAL (no GH_TOKEN)'}`);
 });
