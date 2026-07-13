@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: vocab-backend
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+    disk:
+      name: vocab-disk
+      mountPath: /data
+      sizeGB: 1
