@@ -1,9 +1,9 @@
-// server.js — Express API for vocab backend
-import express from "express";
-import { randomBytes } from "node:crypto";
-import path from "node:path";
+// server.js — pure node HTTP server, no express dep
+import http from "node:http";
 import fs from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomBytes } from "node:crypto";
 import {
   tierSize, getOrCreateUser, getUser,
   initProgress, dueItems, todayItems,
@@ -11,138 +11,153 @@ import {
 } from "./db.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const app = express();
-app.use(express.json({ limit: "32kb" }));
-app.use((req, res, next) => {
-  res.set("Access-Control-Allow-Origin", "*");
-  res.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.set("Access-Control-Allow-Headers", "Content-Type,Authorization");
-  if (req.method === "OPTIONS") return res.status(204).end();
-  next();
-});
-
 const PORT = parseInt(process.env.PORT || "3000", 10);
 
-app.use((req, res, next) => {
-  const t0 = Date.now();
-  res.on("finish", () => {
-    if (req.path === "/healthz") return;
-    console.log(`${req.method} ${req.path} -> ${res.statusCode} ${Date.now()-t0}ms`);
+// Body collection utility
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    req.on("data", chunk => { data += chunk; if (data.length > 1e6) req.destroy(); });
+    req.on("end", () => { try { resolve(JSON.parse(data || "{}")); } catch(e) { resolve({}); } });
+    req.on("error", reject);
   });
-  next();
-});
+}
+
+function sendJson(res, status, obj) {
+  const body = JSON.stringify(obj);
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type,Authorization",
+    "Content-Length": Buffer.byteLength(body),
+  });
+  res.end(body);
+}
+function send(res, status, text = "") {
+  res.writeHead(status, {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type,Authorization",
+    "Content-Type": "text/plain; charset=utf-8",
+  });
+  res.end(text);
+}
 
 function authKey(req) {
-  const h = req.get("Authorization") || "";
+  const h = req.headers.authorization || "";
   const m = h.match(/^Bearer (.+)$/i);
-  return m ? m[1] : (req.query.key || (req.body && req.body.key) || null);
+  return m ? m[1] : null;
 }
 function newKey() {
   const r = randomBytes(4).toString("hex");
   return "kid-" + r.slice(0,4) + "-" + r.slice(4,8);
 }
-function requireUser(req, res) {
-  const k = authKey(req);
-  if (!k) { res.status(401).json({ ok:false, error:"missing key" }); return null; }
-  const u = getUser(k);
-  if (!u) { res.status(401).json({ ok:false, error:"unknown key" }); return null; }
-  return { user: u, key: k };
-}
 
-app.get("/healthz", (req, res) => {
-  res.json({ ok: true, words: { cet4: tierSize("cet4"), cet6: tierSize("cet6") } });
-});
-
-app.post("/api/register", (req, res) => {
-  const k = newKey();
-  getOrCreateUser(k);
-  res.json({ ok:true, key: k });
-});
-app.get("/api/register", (req, res) => {
-  const k = newKey();
-  getOrCreateUser(k);
-  res.json({ ok:true, key: k });
-});
-
-app.get("/api/me", (req, res) => {
-  const c = requireUser(req, res); if (!c) return;
-  const u = c.user;
-  const s = u.tier ? stats(u.uid, u.tier) : { total:0, known_count:0, learning_count:0, due_today:0, streak_days:0 };
-  res.json({ ok:true, key:c.key, tier:u.tier||null, mode:u.mode||null, total:s.total, learned:s.known_count, due_today:s.due_today, streak_days:s.streak_days });
-});
-
-app.post("/api/init", (req, res) => {
-  const c = requireUser(req, res); if (!c) return;
-  const tier = String(req.body.tier || "");
-  const mode = parseInt(req.body.mode, 10);
-  if (!["cet4","cet6"].includes(tier)) return res.status(400).json({ ok:false, error:"tier must be cet4 or cet6" });
-  if (![15,30,60].includes(mode))      return res.status(400).json({ ok:false, error:"mode must be 15/30/60" });
-  try {
-    const r = initProgress(c.key, tier, mode);
-    res.json({ ok:true, total:r.total, daily_target:r.daily_target, already:r.already });
-  } catch (e) {
-    res.status(500).json({ ok:false, error: e.message });
-  }
-});
-
-app.get("/api/due", (req, res) => {
-  const c = requireUser(req, res); if (!c) return;
-  const tier = String(req.query.tier || c.user.tier || "");
-  const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
-  if (!["cet4","cet6"].includes(tier)) return res.status(400).json({ ok:false, error:"bad tier" });
-  const items = dueItems(c.key, tier, limit);
-  res.json({ ok:true, items, count: items.length });
-});
-
-app.get("/api/words/today", (req, res) => {
-  const c = requireUser(req, res); if (!c) return;
-  const tier = String(req.query.tier || c.user.tier || "");
-  if (!["cet4","cet6"].includes(tier)) return res.status(400).json({ ok:false, error:"bad tier" });
-  const items = todayItems(c.key, tier);
-  const today0 = (() => { const d=new Date(); d.setHours(0,0,0,0); return d.getTime(); })();
-  const completed = items.filter(i => i.last_reviewed && i.last_reviewed >= today0).length;
-  res.json({ ok:true, day_index:0, total_today:items.length, completed_today:completed, items });
-});
-
-app.post("/api/grade", (req, res) => {
-  const c = requireUser(req, res); if (!c) return;
-  const { word, tier, grade } = req.body || {};
-  if (!word || !["cet4","cet6"].includes(tier)) return res.status(400).json({ ok:false, error:"missing word/tier" });
-  try {
-    const r = gradeWord(c.key, word, tier, grade);
-    res.json(r);
-  } catch (e) {
-    res.status(400).json({ ok:false, error: e.message });
-  }
-});
-
-app.get("/api/stats", (req, res) => {
-  const c = requireUser(req, res); if (!c) return;
-  const tier = String(req.query.tier || c.user.tier || "");
-  if (!["cet4","cet6"].includes(tier)) return res.status(400).json({ ok:false, error:"bad tier" });
-  res.json(stats(c.key, tier));
-});
-
-app.post("/api/reset", (req, res) => {
-  const c = requireUser(req, res); if (!c) return;
-  const n = deleteProgressForUser(c.key);
-  res.json({ ok:true, deleted:n });
-});
-
-// Serve frontend if present
-const FRONTEND_DIR = process.env.FRONTEND_DIR || path.join(__dirname, "..", "frontend");
-if (fs.existsSync(FRONTEND_DIR)) {
-  app.use(express.static(FRONTEND_DIR));
-  app.get(/^(?!\/api\/|\/healthz).+/, (req, res, next) => {
-    const idx = path.join(FRONTEND_DIR, "index.html");
-    if (fs.existsSync(idx)) return res.sendFile(idx);
-    next();
+const server = http.createServer(async (req, res) => {
+  const t0 = Date.now();
+  res.on("finish", () => {
+    if (req.url !== "/healthz") console.log(`${req.method} ${req.url} -> ${res.statusCode} ${Date.now()-t0}ms`);
   });
-  console.log("serving frontend from", FRONTEND_DIR);
-}
+  if (req.method === "OPTIONS") return send(res, 204);
 
-app.listen(PORT, "0.0.0.0", () => {
+  // Healthz
+  if (req.method === "GET" && req.url === "/healthz") {
+    return sendJson(res, 200, { ok: true, words: { cet4: tierSize("cet4"), cet6: tierSize("cet6") } });
+  }
+
+  // Identify user (from Bearer)
+  const key = authKey(req);
+  const user = key ? getUser(key) : null;
+
+  // Helper: 401 if needed
+  function require() {
+    if (!key || !user) { sendJson(res, 401, { ok: false, error: "missing or unknown key" }); return false; }
+    return true;
+  }
+
+  // Routing
+  try {
+    // POST /api/register
+    if (req.method === "POST" && req.url === "/api/register") {
+      const k = newKey(); getOrCreateUser(k);
+      return sendJson(res, 200, { ok: true, key: k });
+    }
+    // GET /api/me
+    if (req.method === "GET" && req.url.startsWith("/api/me")) {
+      if (!require()) return;
+      const s = user.tier ? stats(user.key, user.tier) : { total:0, known_count:0, learning_count:0, due_today:0, streak_days:0 };
+      return sendJson(res, 200, { ok:true, key:user.key, tier:user.tier||null, mode:user.mode||null, total:s.total, learned:s.known_count, due_today:s.due_today, streak_days:s.streak_days });
+    }
+    // POST /api/init
+    if (req.method === "POST" && req.url === "/api/init") {
+      if (!require()) return;
+      const body = await readBody(req);
+      const tier = String(body.tier || "");
+      const mode = parseInt(body.mode, 10);
+      if (!["cet4","cet6"].includes(tier)) return sendJson(res, 400, { ok:false, error:"tier must be cet4 or cet6" });
+      if (![15,30,60].includes(mode))      return sendJson(res, 400, { ok:false, error:"mode must be 15/30/60" });
+      try {
+        const r = initProgress(user.key, tier, mode);
+        return sendJson(res, 200, { ok:true, total:r.total, daily_target:r.daily_target, already:r.already });
+      } catch (e) { return sendJson(res, 500, { ok:false, error:e.message }); }
+    }
+    // GET /api/due
+    if (req.method === "GET" && req.url.startsWith("/api/due")) {
+      if (!require()) return;
+      const url = new URL(req.url, "http://x");
+      const tier = String(url.searchParams.get("tier") || user.tier || "");
+      const limit = Math.min(parseInt(url.searchParams.get("limit"), 10) || 50, 100);
+      if (!["cet4","cet6"].includes(tier)) return sendJson(res, 400, { ok:false, error:"bad tier" });
+      const items = dueItems(user.key, tier, limit);
+      return sendJson(res, 200, { ok:true, items, count: items.length });
+    }
+    // GET /api/words/today
+    if (req.method === "GET" && req.url.startsWith("/api/words/today")) {
+      if (!require()) return;
+      const url = new URL(req.url, "http://x");
+      const tier = String(url.searchParams.get("tier") || user.tier || "");
+      if (!["cet4","cet6"].includes(tier)) return sendJson(res, 400, { ok:false, error:"bad tier" });
+      const items = todayItems(user.key, tier);
+      const today0 = (() => { const d=new Date(); d.setHours(0,0,0,0); return d.getTime(); })();
+      const completed = items.filter(i => i.last_reviewed && i.last_reviewed >= today0).length;
+      return sendJson(res, 200, { ok:true, day_index:0, total_today:items.length, completed_today:completed, items });
+    }
+    // POST /api/grade
+    if (req.method === "POST" && req.url === "/api/grade") {
+      if (!require()) return;
+      const body = await readBody(req);
+      const { word, tier, grade } = body || {};
+      if (!word || !["cet4","cet6"].includes(tier)) return sendJson(res, 400, { ok:false, error:"missing word/tier" });
+      try {
+        const r = gradeWord(user.key, word, tier, grade);
+        return sendJson(res, 200, r);
+      } catch (e) { return sendJson(res, 400, { ok:false, error:e.message }); }
+    }
+    // GET /api/stats
+    if (req.method === "GET" && req.url.startsWith("/api/stats")) {
+      if (!require()) return;
+      const url = new URL(req.url, "http://x");
+      const tier = String(url.searchParams.get("tier") || user.tier || "");
+      if (!["cet4","cet6"].includes(tier)) return sendJson(res, 400, { ok:false, error:"bad tier" });
+      return sendJson(res, 200, stats(user.key, tier));
+    }
+    // POST /api/reset
+    if (req.method === "POST" && req.url === "/api/reset") {
+      if (!require()) return;
+      const n = deleteProgressForUser(user.key);
+      return sendJson(res, 200, { ok:true, deleted:n });
+    }
+    // 404
+    sendJson(res, 404, { ok:false, error: "not found" });
+  } catch (e) {
+    sendJson(res, 500, { ok:false, error: e.message });
+  }
+});
+
+server.listen(PORT, "0.0.0.0", () => {
   console.log(`vocab backend listening on :${PORT}`);
   console.log(`words: CET-4=${tierSize("cet4")} CET-6=${tierSize("cet6")}`);
-   console.log(`persistence: ${process.env.GH_TOKEN ? 'GitHub repo: ' + (process.env.GH_REPO||'SctrlB/vocab-backend') : 'EPHEMERAL (no GH_TOKEN)'}`);
+  const gh = process.env.GH_TOKEN ? (process.env.GH_REPO || "SctrlB/vocab-backend") : "(ephemeral)";
+  console.log(`persistence: ${gh === "(ephemeral)" ? "EPHEMERAL (no GH_TOKEN)" : "GitHub repo: " + gh}`);
 });
