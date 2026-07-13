@@ -311,6 +311,9 @@ export function gradeWord(uid_key, word, tier, grade) {
 
   if (grade === "known") {
     p.status = "known"; p.intv = 365; p.reps++;
+    p.lastReviewed = now;
+    scheduleFlush();
+    return { ok: true, status: p.status, interval_days: p.intv, next_due_at: now + p.intv * 86400000 };
   } else if (grade === "again") {
     p.status = "learning"; p.ease = clamp(p.ease - 0.2); p.intv = 0; p.reps = 0;
     p.dueAt = now + 10*60*1000;
