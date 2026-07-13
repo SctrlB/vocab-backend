@@ -247,6 +247,8 @@ export function initProgress(uid_key, tier, mode) {
       lastReviewed: null,
     };
   }
+  if (!state.users[uid_key].tiers) state.users[uid_key].tiers = {};
+  state.users[uid_key].tiers[tier] = { mode, initAt: start, total };
   state.users[uid_key].tier = tier;
   state.users[uid_key].mode = mode;
   scheduleFlush();
@@ -362,7 +364,17 @@ export function stats(uid_key, tier) {
   let streak = 0;
   let cursor = (() => { const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); })();
   while (days.has(cursor)) { streak++; cursor -= DAY_MS; }
-  return { ok: true, total, known_count: known, learning_count: learning, due_today: dueToday, streak_days: streak };
+
+  // days_remaining = mode - days_since_init for this tier, floored at 0
+  const u = state.users[uid_key];
+  const tInfo = u?.tiers?.[tier];
+  let days_remaining = null;
+  if (tInfo && tInfo.mode && tInfo.initAt) {
+    const days_since_init = Math.floor((Date.now() - tInfo.initAt) / 86400000);
+    days_remaining = Math.max(0, tInfo.mode - days_since_init);
+  }
+
+  return { ok: true, total, known_count: known, learning_count: learning, due_today: dueToday, streak_days: streak, days_remaining, mode: tInfo?.mode || null };
 }
 
 export function deleteProgressForUser(uid_key) {
