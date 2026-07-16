@@ -384,3 +384,25 @@ export function deleteProgressForUser(uid_key) {
   scheduleFlush();
   return n;
 }
+
+// Delete progress rows for ONE tier. Other tiers untouched.
+export function deleteProgressForTier(uid_key, tier) {
+  const userProg = state.progress[uid_key];
+  if (!userProg) return 0;
+  let n = 0;
+  for (const k of Object.keys(userProg)) {
+    if (userProg[k].tier === tier) {
+      delete userProg[k];
+      n++;
+    }
+  }
+  if (state.users[uid_key] && state.users[uid_key].tier === tier) {
+    state.users[uid_key].tier = null;
+    state.users[uid_key].mode = null;
+  }
+  if (state.users[uid_key] && state.users[uid_key].tiers) {
+    delete state.users[uid_key].tiers[tier];
+  }
+  scheduleFlush();
+  return n;
+}
