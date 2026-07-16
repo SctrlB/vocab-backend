@@ -226,10 +226,23 @@ export function initProgress(uid_key, tier, mode) {
   if (!total) throw new Error("unknown tier: " + tier);
   if (![15, 30, 60].includes(mode)) throw new Error("mode must be 15/30/60");
   const userProg = state.progress[uid_key] || (state.progress[uid_key] = {});
+
+  // Check if this EXACT (tier, mode) plan already exists
+  const tierInfo = state.users[uid_key]?.tiers?.[tier];
+  const sameMode = tierInfo && tierInfo.mode === mode;
   const existing = Object.keys(userProg).filter(k => k.startsWith(tier+"::")).length;
-  if (existing > 0) {
-    const u = state.users[uid_key];
-    return { total: existing, already: true, daily_target: Math.ceil(existing / (u?.mode || mode)) };
+
+  if (existing > 0 && sameMode) {
+    // Exact same plan — just switch to it
+    return { total: existing, already: true, daily_target: Math.ceil(existing / mode), mode };
+  }
+
+  if (existing > 0 && !sameMode) {
+    // Tier exists but mode differs — wipe tier and reinit with new mode
+    for (const k of Object.keys(userProg)) {
+      if (userProg[k].tier === tier) delete userProg[k];
+    }
+    if (state.users[uid_key].tiers) delete state.users[uid_key].tiers[tier];
   }
   const bucketSize = Math.ceil(total / mode);
   const start = (() => { const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); })();
