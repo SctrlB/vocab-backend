@@ -7,7 +7,7 @@ import { randomBytes } from "node:crypto";
 import {
   tierSize, getOrCreateUser, getUser,
   initProgress, dueItems, todayItems,
-  gradeWord, stats, deleteProgressForUser,
+  gradeWord, stats, deleteProgressForUser, deleteProgressForTier,
 } from "./db.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -86,8 +86,19 @@ const server = http.createServer(async (req, res) => {
     // GET /api/me
     if (req.method === "GET" && req.url.startsWith("/api/me")) {
       if (!require()) return;
-      const s = user.tier ? stats(user.key, user.tier) : { total:0, known_count:0, learning_count:0, due_today:0, streak_days:0 };
-      return sendJson(res, 200, { ok:true, key:user.key, tier:user.tier||null, mode:user.mode||null, total:s.total, learned:s.known_count, due_today:s.due_today, streak_days:s.streak_days });
+      let activeTier = user.tier;
+    let activeMode = user.mode;
+    if (!activeTier) {
+      // Auto-detect any tier that has progress
+      const userProg = (user && user.tiers) ? user.tiers : {};
+      const tierNames = Object.keys(userProg);
+      if (tierNames.length > 0) {
+        activeTier = tierNames[0];
+        activeMode = userProg[activeTier].mode;
+      }
+    }
+    const s = activeTier ? stats(user.key, activeTier) : { total:0, known_count:0, learning_count:0, due_today:0, streak_days:0, days_remaining:null, mode:null };
+      return sendJson(res, 200, { ok:true, key:user.key, tier:activeTier, mode:activeMode, total:s.total, learned:s.known_count, due_today:s.due_today, streak_days:s.streak_days, tiers: (user.tiers||{}) });
     }
     // POST /api/init
     if (req.method === "POST" && req.url === "/api/init") {
@@ -142,10 +153,13 @@ const server = http.createServer(async (req, res) => {
       if (!["cet4","cet6"].includes(tier)) return sendJson(res, 400, { ok:false, error:"bad tier" });
       return sendJson(res, 200, stats(user.key, tier));
     }
-    // POST /api/reset
+    // POST /api/reset  (optional body {tier} — if absent, delete ALL)
     if (req.method === "POST" && req.url === "/api/reset") {
       if (!require()) return;
-      const n = deleteProgressForUser(user.key);
+      const body = await readBody(req);
+      const n = body && body.tier
+        ? deleteProgressForTier(user.key, body.tier)
+        : deleteProgressForUser(user.key);
       return sendJson(res, 200, { ok:true, deleted:n });
     }
     // 404
