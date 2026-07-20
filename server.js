@@ -8,10 +8,26 @@ import {
   tierSize, getOrCreateUser, getUser,
   initProgress, dueItems, todayItems,
   gradeWord, stats, deleteProgressForUser, deleteProgressForTier,
+  getUserProgressMap,
 } from "./db.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || "3000", 10);
+
+// Load words.json for dictionary endpoint
+const WORDS_PATH = process.env.WORDS_PATH || path.join(__dirname, "words.json");
+let wordsByTier;
+try {
+  wordsByTier = JSON.parse(fs.readFileSync(WORDS_PATH, "utf-8"));
+} catch (e) {
+  console.error("FATAL: cannot read words.json:", e.message);
+  process.exit(1);
+}
+if (!wordsByTier.cet4 || !wordsByTier.cet6) {
+  console.error("FATAL: words.json missing cet4 or cet6");
+  process.exit(1);
+}
+console.log(`dictionary words loaded: CET-4=${wordsByTier.cet4.length} CET-6=${wordsByTier.cet6.length}`);
 
 // Body collection utility
 function readBody(req) {
@@ -152,6 +168,17 @@ const server = http.createServer(async (req, res) => {
       const tier = String(url.searchParams.get("tier") || user.tier || "");
       if (!["cet4","cet6"].includes(tier)) return sendJson(res, 400, { ok:false, error:"bad tier" });
       return sendJson(res, 200, stats(user.key, tier));
+    }
+    // GET /api/dictionary — return all words + this user's progress statuses
+    if (req.method === "GET" && req.url.startsWith("/api/dictionary")) {
+      if (!require()) return;
+      const url = new URL(req.url, "http://x");
+      const tier = String(url.searchParams.get("tier") || "all");
+      const progressMap = getUserProgressMap(user.key);
+      const result = { ok: true, progress: progressMap };
+      if (tier === "all" || tier === "cet4") result.cet4 = wordsByTier.cet4;
+      if (tier === "all" || tier === "cet6") result.cet6 = wordsByTier.cet6;
+      return sendJson(res, 200, result);
     }
     // POST /api/reset  (optional body {tier} — if absent, delete ALL)
     if (req.method === "POST" && req.url === "/api/reset") {
