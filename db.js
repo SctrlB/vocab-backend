@@ -399,6 +399,19 @@ export function deleteProgressForUser(uid_key) {
 }
 
 // Delete progress rows for ONE tier. Other tiers untouched.
+// Build a {wordLowercase: status} map for the user's known/learning words.
+export function getUserProgressMap(uid_key) {
+  const userProg = state.progress[uid_key] || {};
+  const out = {};
+  for (const k of Object.keys(userProg)) {
+    const p = userProg[k];
+    if (p.status === "known" || p.status === "learning") {
+      out[p.word.toLowerCase()] = p.status;
+    }
+  }
+  return out;
+}
+
 export function deleteProgressForTier(uid_key, tier) {
   const userProg = state.progress[uid_key];
   if (!userProg) return 0;
